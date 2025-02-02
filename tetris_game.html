@@ -1,0 +1,336 @@
+<!DOCTYPE html> 
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>微信俄罗斯方块</title>
+    <style>
+        body { 
+            margin: 0; 
+            touch-action: none; 
+            background: #2c3e50;
+            font-family: Arial, sans-serif;
+        }
+        #game { 
+            display: block; 
+            margin: 20px auto;
+            border: 2px solid #34495e;
+        }
+        #controls {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            max-width: 300px;
+            margin: 20px auto;
+            color: white;
+        }
+        button {
+            padding: 15px;
+            font-size: 16px;
+            border: none;
+            border-radius: 5px;
+            background: #3498db;
+            color: white;
+            touch-action: manipulation;
+        }
+        button:active {
+            transform: scale(0.95);
+            filter: brightness(0.9);
+        }
+        #score {
+            font-size: 24px;
+            text-align: center;
+            color: #ecf0f1;
+            margin: 15px 0;
+        }
+        #history {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            display: none;
+        }
+        .score-update {
+            transform: scale(1.2);
+            color: #f1c40f !important;
+            transition: all 0.3s ease;
+        }
+        @media screen and (orientation: portrait) {
+            body::before {
+                content: "请旋转手机至横屏模式";
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                z-index: 999;
+                color: white;
+                font-size: 24px;
+                text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="score">得分: 0</div>
+    <div id="history">
+        <h3>历史记录</h3>
+        <ul id="historyList"></ul>
+    </div>
+    <canvas id="game"></canvas>
+    <div id="controls">
+        <button ontouchstart="moveLeft()">←</button>
+        <button ontouchstart="rotate()">旋转</button>
+        <button ontouchstart="moveRight()">→</button>
+        <button ontouchstart="fastDrop()" id="dropBtn">↓</button>
+        <button ontouchstart="startGame()" id="startBtn">开始</button>
+    </div>
+
+<script>
+// 游戏配置
+const BLOCK_SIZE = 30;
+const COLS = 10;
+const ROWS = 20;
+const SHAPES = [
+    [[1,1,1,1]], // I
+    [[1,1],[1,1]], // O
+    [[1,1,1],[0,1,0]], // T
+    [[1,1,0],[0,1,1]], // S
+    [[0,1,1],[1,1,0]], // Z
+    [[1,0,0],[1,1,1]], // L
+    [[0,0,1],[1,1,1]]  // J
+];
+const COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#9b59b6', '#f1c40f'];
+const STORAGE_KEY = 'tetris_high_scores';
+
+// 游戏状态
+let canvas = document.getElementById('game');
+let ctx = canvas.getContext('2d');
+let board = Array(ROWS).fill().map(() => Array(COLS).fill(0));
+let currentPiece = null;
+let gameLoopId = null;
+let score = 0;
+let gameStarted = false;
+let historyScores = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+let touchStartX = 0;
+let touchTimer = null;
+
+function initCanvas() {
+    canvas.width = COLS * BLOCK_SIZE;
+    canvas.height = ROWS * BLOCK_SIZE;
+    canvas.style.touchAction = 'none';
+}
+
+function spawnNewPiece() {
+    const shape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
+    currentPiece = {
+        shape: shape,
+        x: Math.floor((COLS - shape[0].length)/2),
+        y: 0,
+        color: COLORS[Math.floor(Math.random() * COLORS.length)]
+    };
+}
+
+function collisionCheck(px, py, shape) {
+    for (let y = 0; y < shape.length; y++) {
+        for (let x = 0; x < shape[y].length; x++) {
+            if (shape[y][x]) {
+                const newX = px + x;
+                const newY = py + y;
+                if (newX < 0 || newX >= COLS || newY >= ROWS) return true;
+                if (newY >= 0 && board[newY][newX]) return true;
+            }
+        }
+    }
+    return false;
+}
+
+function mergePiece() {
+    currentPiece.shape.forEach((row, y) => {
+        row.forEach((value, x) => {
+            if (value) {
+                board[currentPiece.y + y][currentPiece.x + x] = currentPiece.color;
+            }
+        });
+    });
+}
+
+function clearLines() {
+    let linesCleared = 0;
+    for (let y = ROWS - 1; y >= 0; y--) {
+        if (board[y].every(cell => cell)) {
+            board.splice(y, 1);
+            board.unshift(Array(COLS).fill(0));
+            linesCleared++;
+            y++;
+        }
+    }
+    if (linesCleared > 0) updateScore(linesCleared * 100);
+}
+
+function updateScore(points) {
+    score += points;
+    const scoreElement = document.getElementById('score');
+    scoreElement.textContent = `得分: ${score}`;
+    scoreElement.classList.add('score-update');
+    setTimeout(() => scoreElement.classList.remove('score-update'), 300);
+}
+
+function gameLoop() {
+    if (collisionCheck(currentPiece.x, currentPiece.y + 1, currentPiece.shape)) {
+        mergePiece();
+        clearLines();
+        if (collisionCheck(currentPiece.x, currentPiece.y, currentPiece.shape)) {
+            gameOver();
+            return;
+        }
+        spawnNewPiece();
+    } else {
+        currentPiece.y++;
+    }
+    draw();
+}
+
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    board.forEach((row, y) => {
+        row.forEach((color, x) => {
+            if (color) {
+                ctx.fillStyle = color;
+                ctx.fillRect(x*BLOCK_SIZE, y*BLOCK_SIZE, BLOCK_SIZE-1, BLOCK_SIZE-1);
+            }
+        });
+    });
+
+    if (currentPiece) {
+        ctx.fillStyle = currentPiece.color;
+        currentPiece.shape.forEach((row, y) => {
+            row.forEach((value, x) => {
+                if (value) {
+                    ctx.fillRect(
+                        (currentPiece.x + x) * BLOCK_SIZE,
+                        (currentPiece.y + y) * BLOCK_SIZE,
+                        BLOCK_SIZE-1,
+                        BLOCK_SIZE-1
+                    );
+                }
+            });
+        });
+    }
+}
+
+// 控制函数
+function moveLeft() {
+    if (!gameStarted) return;
+    if (!collisionCheck(currentPiece.x - 1, currentPiece.y, currentPiece.shape)) {
+        currentPiece.x--;
+        draw();
+    }
+}
+
+function moveRight() {
+    if (!gameStarted) return;
+    if (!collisionCheck(currentPiece.x + 1, currentPiece.y, currentPiece.shape)) {
+        currentPiece.x++;
+        draw();
+    }
+}
+
+function rotate() {
+    if (!gameStarted) return;
+    const rotated = currentPiece.shape[0].map((_, i) =>
+        currentPiece.shape.map(row => row[i]).reverse()
+    );
+    if (!collisionCheck(currentPiece.x, currentPiece.y, rotated)) {
+        currentPiece.shape = rotated;
+        draw();
+    }
+}
+
+function fastDrop() {
+    if (!gameStarted) return;
+    
+    let dropDistance = 0;
+    while (!collisionCheck(currentPiece.x, currentPiece.y + dropDistance + 1, currentPiece.shape)) {
+        dropDistance++;
+    }
+    
+    if (dropDistance > 0) {
+        currentPiece.y += dropDistance;
+        updateScore(dropDistance * 2);
+        gameLoop();
+    }
+}
+
+// 游戏流程控制
+function startGame() {
+    document.getElementById('history').style.display = 'none';
+    if (gameStarted) {
+        resetGame();
+        return;
+    }
+    gameStarted = true;
+    document.getElementById('startBtn').textContent = '重置';
+    board = Array(ROWS).fill().map(() => Array(COLS).fill(0));
+    score = 0;
+    document.getElementById('score').textContent = '得分: 0';
+    spawnNewPiece();
+    gameLoopId = setInterval(gameLoop, 1000);
+}
+
+function resetGame() {
+    clearInterval(gameLoopId);
+    gameStarted = false;
+    document.getElementById('startBtn').textContent = '开始';
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+function gameOver() {
+    resetGame();
+    if(score > 0) {
+        historyScores.push(score);
+        historyScores = historyScores.sort((a,b) => b - a).slice(0,5);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(historyScores));
+    }
+    showHistory();
+    alert(`游戏结束！得分: ${score}
+历史最佳: ${Math.max(...historyScores, 0)}`);
+}
+
+// 历史记录功能
+function showHistory() {
+    const listElement = document.getElementById('historyList');
+    listElement.innerHTML = historyScores
+        .map((s, i) => `<li>第${i+1}名: ${s}分</li>`)
+        .join('') || '<li>暂无记录</li>';
+    document.getElementById('history').style.display = 'block';
+}
+
+// 触摸事件处理
+canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    touchStartX = e.touches[0].clientX;
+    touchTimer = setTimeout(fastDrop, 300);
+});
+
+canvas.addEventListener('touchend', e => {
+    e.preventDefault();
+    clearTimeout(touchTimer);
+    const deltaX = e.changedTouches[0].clientX - touchStartX;
+    if (Math.abs(deltaX) > 30) {
+        deltaX > 0 ? moveRight() : moveLeft();
+    } else {
+        rotate();
+    }
+});
+
+// 初始化
+initCanvas();
+showHistory();
+document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+</script>
+</body>
+</html>

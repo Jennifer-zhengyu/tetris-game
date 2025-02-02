@@ -1,4 +1,4 @@
-<!DOCTYPE html> 
+<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
@@ -296,8 +296,7 @@ function gameOver() {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(historyScores));
     }
     showHistory();
-    alert(`游戏结束！得分: ${score}
-历史最佳: ${Math.max(...historyScores, 0)}`);
+    alert(`游戏结束！得分: ${score}\n历史最佳: ${Math.max(...historyScores, 0)}`);
 }
 
 // 历史记录功能
